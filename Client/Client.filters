@@ -15,12 +15,15 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="client_session.h">
+    <ClInclude Include="dev\client\include\client_session.h">
       <Filter>include</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="client_session.cpp">
+    <ClCompile Include="dev\client\src\main.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="dev\client\src\client_session.cpp">
       <Filter>src</Filter>
     </ClCompile>
   </ItemGroup>
