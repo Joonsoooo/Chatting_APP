@@ -1,7 +1,7 @@
 #include "server_session.h"
 
 server_session::server_session()
-    : m_serv_sock(INVALID_SOCKET)
+    : m_serv_sock(INVALID_SOCKET), m_running(false), m_wsa_ready(false)
 {
 }
 
@@ -10,23 +10,36 @@ server_session::~server_session()
     close();
 }
 
-void server_session::init()
+bool server_session::init()
 {
     WSADATA wsa_data;
 
     if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0)
     {
-        print_err("WSAStartup() error!");
+        print_wsa_error("WSAStartup() error!");
+
+        return false;
     }
+
+    m_wsa_ready = true;
 
     m_serv_sock = socket(PF_INET, SOCK_STREAM, 0);
+
     if (m_serv_sock == INVALID_SOCKET)
     {
-        print_err("socket() error!");
+        print_wsa_error("socket() error!");
+
+        WSACleanup();
+
+        m_wsa_ready = false;
+
+        return false;
     }
+
+    return true;
 }
 
-void server_session::start_server()
+bool server_session::start_server()
 {
     SOCKADDR_IN serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
@@ -37,20 +50,28 @@ void server_session::start_server()
 
     if (bind(m_serv_sock, (SOCKADDR*)&serv_addr, sizeof(serv_addr)) == SOCKET_ERROR)
     {
-        print_err("bind() error!");
+        print_wsa_error("bind() error!");
+        
+        return false;
     }
 
     if (listen(m_serv_sock, 5) == SOCKET_ERROR)
     {
-        print_err("listen() error!");
+        print_wsa_error("listen() error!");
+
+        return false;
     }
 
+    m_running = true;
+
     cout << "[Server] started on port 9000\n";
+
+    return true;
 }
 
 void server_session::accept_loop()
 {
-    while (true)
+    while (m_running)
     {
         SOCKADDR_IN clnt_addr;
         int sz_clnt_addr = sizeof(clnt_addr);
@@ -58,7 +79,11 @@ void server_session::accept_loop()
         SOCKET clnt_sock = accept(m_serv_sock, (SOCKADDR*)&clnt_addr, &sz_clnt_addr);
         if (clnt_sock == INVALID_SOCKET)
         {
-            cerr << "[Server] accept() error\n";
+            if (m_running)
+            {
+                print_wsa_error("accept() error");
+            }
+
             continue;
         }
 
@@ -74,27 +99,36 @@ void server_session::accept_loop()
         cout << "[Server] client connected. sock=" << clnt_sock << "\n";
 
         thread client_thread(&server_session::handle_client, this, clnt_sock);
+
         client_thread.detach();
     }
 }
 
 void server_session::handle_client(SOCKET sock)
 {
-    char buf[4097] = { 0 };
+    MESSAGE_TYPE type = MESSAGE_TYPE::SYSTEM;
 
-    int recv_size = recv(sock, buf, 4096, 0);
-    if (recv_size == SOCKET_ERROR || recv_size == 0)
+    string payload;
+
+    if (!recv_packet(sock, type, payload) || type != MESSAGE_TYPE::NICKNAME)
     {
         remove_client(sock);
+
         closesocket(sock);
+
         return;
     }
 
-    buf[recv_size] = '\0';
-    string nickname = buf;
+    string nickname = payload;
+
+    if (nickname.empty())
+    {
+        nickname = "anonymous";
+    }
 
     {
         lock_guard<mutex> lock(m_client_lock);
+
         if (m_client_info.find(sock) != m_client_info.end())
         {
             m_client_info[sock].nickname = nickname;
@@ -104,64 +138,70 @@ void server_session::handle_client(SOCKET sock)
     {
         string enter_msg = "[Server] " + nickname + " joined the chat.";
         cout << enter_msg << "\n";
-        broadcast_message(enter_msg, INVALID_SOCKET);
+
+        broadcast_message(MESSAGE_TYPE::SYSTEM, enter_msg, INVALID_SOCKET);
     }
 
-    while (true)
+    while (m_running)
     {
-        memset(buf, 0, sizeof(buf));
-
-        recv_size = recv(sock, buf, 4096, 0);
-
-        if (recv_size == SOCKET_ERROR)
+        if (!recv_packet(sock, type, payload))
         {
-            cout << "[Server] recv() error. sock=" << sock << "\n";
-            break;
-        }
-        else if (recv_size == 0)
-        {
-            cout << "[Server] client disconnected. sock=" << sock << "\n";
             break;
         }
 
-        buf[recv_size] = '\0';
+        if (type != MESSAGE_TYPE::CHAT)
+        {
+            continue;
+        }
 
-        string chat_msg = nickname + " : " + string(buf);
+        string chat_msg = nickname + " : " + payload;
 
         cout << chat_msg << "\n";
-        broadcast_message(chat_msg, sock);
+        broadcast_message(MESSAGE_TYPE::CHAT, chat_msg, sock);
     }
 
     {
         string leave_msg = "[Server] " + nickname + " left the chat.";
         cout << leave_msg << "\n";
-        broadcast_message(leave_msg, INVALID_SOCKET);
+
+        broadcast_message(MESSAGE_TYPE::SYSTEM, leave_msg, INVALID_SOCKET);
     }
 
     remove_client(sock);
+
     closesocket(sock);
 }
 
-void server_session::broadcast_message(const string& msg, SOCKET sender_sock)
+void server_session::broadcast_message(MESSAGE_TYPE type, const string& msg, SOCKET sender_sock)
 {
-    lock_guard<mutex> lock(m_client_lock);
+    vector<SOCKET> sockets;
 
-    for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
     {
-        SOCKET target_sock = it->second.sock;
-
-        if (target_sock == INVALID_SOCKET)
+        lock_guard<mutex> lock(m_client_lock);
+        for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
         {
-            continue;
+            SOCKET target_sock = it->second.sock;
+            if (target_sock != INVALID_SOCKET)
+            {
+                sockets.push_back(target_sock);
+            }
         }
+    }
 
-        // 보낸 사람 제외하고 싶으면 이 조건 사용
-        // if (target_sock == sender_sock) continue;
+    for (size_t i = 0; i < sockets.size(); ++i)
+    {
+        SOCKET target_sock = sockets[i];
 
-        int ret = send(target_sock, msg.c_str(), (int)msg.size(), 0);
-        if (ret == SOCKET_ERROR)
+        if (!send_packet(target_sock, type, msg))
         {
-            cerr << "[Server] send() error. sock=" << target_sock << "\n";
+            cerr << "[Server] send() error. sock=" << target_sock;
+            if (sender_sock != INVALID_SOCKET && target_sock == sender_sock)
+            {
+                cerr << " (sender)";
+            }
+            cerr << "\n";
+            remove_client(target_sock);
+            closesocket(target_sock);
         }
     }
 }
@@ -179,6 +219,8 @@ void server_session::remove_client(SOCKET sock)
 
 void server_session::close()
 {
+    m_running = false;
+
     {
         lock_guard<mutex> lock(m_client_lock);
 
@@ -187,6 +229,7 @@ void server_session::close()
         {
             if (it->second.sock != INVALID_SOCKET)
             {
+                shutdown(it->second.sock, SD_BOTH);
                 closesocket(it->second.sock);
             }
         }
@@ -196,9 +239,14 @@ void server_session::close()
 
     if (m_serv_sock != INVALID_SOCKET)
     {
+        shutdown(m_serv_sock, SD_BOTH);
         closesocket(m_serv_sock);
         m_serv_sock = INVALID_SOCKET;
     }
 
-    WSACleanup();
+    if (m_wsa_ready)
+    {
+        WSACleanup();
+        m_wsa_ready = false;
+    }
 }

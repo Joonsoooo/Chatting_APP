@@ -4,16 +4,20 @@
 class client_session
 {
 public:
-	client_session() {}
-	~client_session() { close(); }
+	client_session();
+	~client_session();
 
-	void init();
+	bool init();
 	void close();
-	void connect_server();
+	bool connect_server();
 	void recv_loop();
-	void send_message(const string& msg);
-	void begin_session();
+	bool send_nickname(const string& nickname);
+	bool send_chat(const string& msg);
+	bool is_running() const;
 private:
 	USER_INFO m_user_info;
+	atomic<bool> m_running;
+	atomic<bool> m_wsa_ready;
+	mutex m_state_lock;
 };
 

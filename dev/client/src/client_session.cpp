@@ -1,35 +1,71 @@
-//#include "server_session.h"
 #include "client_session.h"
 
 const char* IP = "127.0.0.1";
 const char* PORT = "9000";
 
+client_session::client_session()
+	: m_running(false), m_wsa_ready(false)
+{
+}
 
-void client_session::init()
+client_session::~client_session()
+{
+	close();
+
+	if (m_wsa_ready)
+	{
+		WSACleanup();
+
+		m_wsa_ready = false;
+	}
+}
+
+bool client_session::init()
 {
 	WSADATA wsa_data;
 
 	if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0)
 	{
-		print_err("WSAStartup() error");
+		print_wsa_error("WSAStartup() error");
+
+		return false;
 	}
+
+	m_wsa_ready = true;
 
 	m_user_info.sock = socket(PF_INET, SOCK_STREAM, 0);
 
 	if (m_user_info.sock == INVALID_SOCKET)
 	{
-		print_err("sock() error");
+		print_wsa_error("socket() error");
+
+		WSACleanup();
+
+		m_wsa_ready = false;
+
+		return false;
 	}
 
+	return true;
 }
 
 void client_session::close()
 {
-	closesocket(m_user_info.sock);
-	WSACleanup();
+	lock_guard<mutex> lock(m_state_lock);
+
+	m_running = false;
+
+	if (m_user_info.sock != INVALID_SOCKET)
+	{
+		shutdown(m_user_info.sock, SD_BOTH);
+
+		closesocket(m_user_info.sock);
+
+		m_user_info.sock = INVALID_SOCKET;
+	}
 }
 
-void client_session::connect_server()
+bool client_session::connect_server()
 {
     SOCKADDR_IN addr;
     memset(&addr, 0, sizeof(addr));
@@ -40,61 +76,77 @@ void client_session::connect_server()
 
     if (connect(m_user_info.sock, (SOCKADDR*)&addr, sizeof(addr)) == SOCKET_ERROR)
     {
-        print_err("connect() error!");
+        print_wsa_error("connect() error!");
+
+		return false;
     }
+
+	m_running = true;
+
+	return true;
 }
 
 void client_session::recv_loop()
 {
-    while (true)
+    while (m_running)
     {
-        char msg[4097] = { 0 };
+		MESSAGE_TYPE type = MESSAGE_TYPE::SYSTEM;
 
-        int msg_size = recv(m_user_info.sock, msg, 4096, 0);
+		string payload;
 
-        if (msg_size == SOCKET_ERROR)
-        {
-            std::cout << "recv() error!\n";
-            break;
-        }
-        else if (msg_size == 0)
-        {
-            std::cout << "server closed connection\n";
-            break;
-        }
+		if (!recv_packet(m_user_info.sock, type, payload))
+		{
+			if (m_running)
+			{
+				cout << "server closed connection\n";
+			}
 
-        msg[msg_size] = '\0';
-        cout << msg << endl;
+			break;
+		}
+
+		if (type == MESSAGE_TYPE::CHAT || type == MESSAGE_TYPE::SYSTEM)
+		{
+			cout << payload << endl;
+		}
     }
+
+	m_running = false;
 }
 
-void client_session::send_message(const string& msg)
+bool client_session::send_nickname(const string& nickname)
 {
-    if (send(m_user_info.sock, msg.c_str(), (int)msg.size(), 0) == SOCKET_ERROR)
-    {
-        print_err("send() error!");
-    }
+	if (!send_packet(m_user_info.sock, MESSAGE_TYPE::NICKNAME, nickname))
+	{
+		print_wsa_error("send nickname error");
+
+		m_running = false;
+
+		return false;
+	}
+
+	return true;
 }
 
-void client_session::begin_session()
+bool client_session::send_chat(const string& msg)
 {
-    while (true)
-    {
-        char msg[4097] = { 0 };
+	if (!m_running)
+	{
+		return false;
+	}
 
-        int msg_size = recv(m_user_info.sock, msg, 4096, 0);
+	if (!send_packet(m_user_info.sock, MESSAGE_TYPE::CHAT, msg))
+	{
+		print_wsa_error("send chat error");
 
-        if (msg_size == SOCKET_ERROR)
-        {
-            print_err("recv() error!");
-        }
-        else if (msg_size == 0)
-        {
-            printf("server closed connection\n");
-            break;
-        }
+		m_running = false;
 
-        msg[msg_size] = '\0';
-        printf("recv message: %s\n", msg);
-    }
+		return false;
+	}
+
+	return true;
+}
+
+bool client_session::is_running() const
+{
+	return m_running;
 }

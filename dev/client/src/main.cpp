@@ -4,20 +4,38 @@ int main()
 {
     client_session client;
 
-    client.init();
-    client.connect_server();
+    if (false == client.init())
+    {
+        return 1;
+    }
+
+    if (false == client.connect_server())
+    {
+        return 1;
+    }
 
     string nickname;
+    
     cout << "nickname: ";
-    getline(std::cin, nickname);
-    client.send_message(nickname);
+
+    getline(cin, nickname);
+
+    if (false == client.send_nickname(nickname))
+    {
+        client.close();
+
+        return 1;
+    }
 
     thread recv_thread(&client_session::recv_loop, &client);
 
-    while (true)
+    while (client.is_running())
     {
-        std::string input;
-        std::getline(std::cin, input);
+        string input;
+        if (!getline(cin, input))
+        {
+            break;
+        }
 
         if (input == "exit")
         {
@@ -26,7 +44,10 @@ int main()
 
         if (!input.empty())
         {
-            client.send_message(input);
+            if (!client.send_chat(input))
+            {
+                break;
+            }
         }
     }
 
@@ -34,7 +55,7 @@ int main()
 
     if (recv_thread.joinable())
     {
-        recv_thread.detach();
+        recv_thread.join();
     }
 
     return 0;
