@@ -9,6 +9,16 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Server", "Server\Server.vcx
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Comm_lib", "Comm_lib\Comm_lib.vcxproj", "{DE459EB4-A7FE-4C3D-8C94-F907FEE9A20F}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "QtClient", "QtClient", "{8D33EB92-0575-44B4-A0D8-832055C77BA4}"
+	ProjectSection(SolutionItems) = preProject
+		QtClient\CMakeLists.txt = QtClient\CMakeLists.txt
+		QtClient\chatwindow.cpp = QtClient\chatwindow.cpp
+		QtClient\chatwindow.h = QtClient\chatwindow.h
+		QtClient\main.cpp = QtClient\main.cpp
+		QtClient\protocol.h = QtClient\protocol.h
+		QtClient\QtClient.pro = QtClient\QtClient.pro
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64

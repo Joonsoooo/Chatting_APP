@@ -18,5 +18,17 @@
     <ClInclude Include="..\dev\comm\include\def.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
+    <ClInclude Include="..\dev\comm\include\error.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="..\dev\comm\include\packet.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="..\dev\comm\include\socket_utils.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="..\dev\comm\include\validation.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

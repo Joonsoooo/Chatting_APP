@@ -20,6 +20,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\dev\comm\include\def.h" />
+    <ClInclude Include="..\dev\comm\include\error.h" />
+    <ClInclude Include="..\dev\comm\include\packet.h" />
+    <ClInclude Include="..\dev\comm\include\socket_utils.h" />
+    <ClInclude Include="..\dev\comm\include\validation.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>

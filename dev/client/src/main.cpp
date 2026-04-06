@@ -3,6 +3,16 @@
 int main()
 {
     client_session client;
+    string host;
+    string port;
+
+    cout << "server ip (default 127.0.0.1): ";
+    getline(cin, host);
+
+    cout << "server port (default 9000): ";
+    getline(cin, port);
+
+    client.configure_endpoint(host, port);
 
     if (false == client.init())
     {
@@ -21,6 +31,13 @@ int main()
     getline(cin, nickname);
 
     if (false == client.send_nickname(nickname))
+    {
+        client.close();
+
+        return 1;
+    }
+
+    if (false == client.wait_for_nickname_response())
     {
         client.close();
 

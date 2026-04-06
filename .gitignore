@@ -9,10 +9,25 @@ Debug/
 Release/
 x64/
 x86/
+binary/
+QtClient/build-*/
+QtClient/CMakeFiles/
 
 # User-specific
 *.user
 *.suo
+*.pro.user
 
 # IntelliSense / PCH cache
 ipch/
+
+# CMake / Qt generated
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CMakeUserPresets.json
+.qmake.stash
+
+# Misc generated files
+$null
