@@ -17,10 +17,13 @@ enum class MESSAGE_TYPE : uint32_t
 	USER_LIST = 10,
 	NICKNAME_CHANGED = 11,
 	WHISPER = 12,
+	ROOM_LIST = 13,
+	ROOM_CHANGED = 14,
 };
 
 constexpr size_t MAX_PACKET_PAYLOAD_SIZE = 64 * 1024;
 constexpr size_t MAX_NICKNAME_LENGTH = 20;
+constexpr size_t MAX_ROOM_NAME_LENGTH = 24;
 constexpr size_t MAX_CHAT_LENGTH = 512;
 constexpr size_t MAX_CONNECTED_CLIENTS = 10;
 

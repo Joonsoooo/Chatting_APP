@@ -17,6 +17,8 @@ enum class MessageType : uint32_t
     UserList = 10,
     NicknameChanged = 11,
     Whisper = 12,
+    RoomList = 13,
+    RoomChanged = 14,
 };
 
 struct PacketHeader

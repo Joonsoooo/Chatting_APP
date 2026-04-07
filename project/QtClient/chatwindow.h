@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidgetItem>
 #include <QMainWindow>
 #include <QPlainTextEdit>
 #include <QPushButton>
@@ -26,6 +27,9 @@ private slots:
     void socketConnected();
     void socketDisconnected();
     void socketErrorOccurred(QAbstractSocket::SocketError socketError);
+    void joinSelectedRoom(QListWidgetItem* item);
+    void createOrJoinRoom();
+    void leaveCurrentRoom();
 
 private:
     void setupUi();
@@ -34,6 +38,8 @@ private:
     void appendLog(const QString& text, const QColor& color = QColor(Qt::black));
     void appendError(const QString& text);
     void updateUserList(const QString& payload);
+    void updateRoomList(const QString& payload);
+    void updateCurrentRoom(const QString& payload);
     bool processBufferedPacket();
     void handlePacket(MessageType type, const QString& payload);
     void sendPacket(MessageType type, const QString& payload);
@@ -48,8 +54,13 @@ private:
     QLineEdit* m_nicknameEdit;
     QPushButton* m_connectButton;
     QLabel* m_statusLabel;
+    QLabel* m_currentRoomLabel;
     QPlainTextEdit* m_logView;
     QListWidget* m_userList;
+    QListWidget* m_roomList;
+    QLineEdit* m_roomEdit;
+    QPushButton* m_roomActionButton;
+    QPushButton* m_leaveRoomButton;
     QLineEdit* m_messageEdit;
     QPushButton* m_sendButton;
 };

@@ -27,6 +27,17 @@ QString trimTimestampPrefix(const QString& payload)
 
     return payload;
 }
+
+QString extractRoomName(const QString& roomText)
+{
+    const int countIndex = roomText.indexOf(" (");
+    if (countIndex > 0)
+    {
+        return roomText.left(countIndex).trimmed();
+    }
+
+    return roomText.trimmed();
+}
 }
 
 ChatWindow::ChatWindow(QWidget* parent)
@@ -39,8 +50,13 @@ ChatWindow::ChatWindow(QWidget* parent)
       m_nicknameEdit(nullptr),
       m_connectButton(nullptr),
       m_statusLabel(nullptr),
+      m_currentRoomLabel(nullptr),
       m_logView(nullptr),
       m_userList(nullptr),
+      m_roomList(nullptr),
+      m_roomEdit(nullptr),
+      m_roomActionButton(nullptr),
+      m_leaveRoomButton(nullptr),
       m_messageEdit(nullptr),
       m_sendButton(nullptr)
 {
@@ -54,6 +70,10 @@ ChatWindow::ChatWindow(QWidget* parent)
     connect(m_socket, &QTcpSocket::disconnected, this, &ChatWindow::socketDisconnected);
     connect(m_socket, &QTcpSocket::readyRead, this, &ChatWindow::readFromSocket);
     connect(m_socket, &QTcpSocket::errorOccurred, this, &ChatWindow::socketErrorOccurred);
+    connect(m_roomList, &QListWidget::itemDoubleClicked, this, &ChatWindow::joinSelectedRoom);
+    connect(m_roomActionButton, &QPushButton::clicked, this, &ChatWindow::createOrJoinRoom);
+    connect(m_leaveRoomButton, &QPushButton::clicked, this, &ChatWindow::leaveCurrentRoom);
+    connect(m_roomEdit, &QLineEdit::returnPressed, this, &ChatWindow::createOrJoinRoom);
 
     setConnectedUiState(false);
 }
@@ -90,12 +110,20 @@ void ChatWindow::setupUi()
     m_connectButton = new QPushButton("Connect", this);
     m_statusLabel = new QLabel("Disconnected", this);
     m_statusLabel->setStyleSheet("QLabel { color: #8a2d2d; font-weight: 600; }");
+    m_currentRoomLabel = new QLabel("Lobby", this);
+    m_currentRoomLabel->setStyleSheet("QLabel { color: #8f5a1b; font-weight: 600; }");
 
     m_logView = new QPlainTextEdit(this);
     m_logView->setReadOnly(true);
 
     m_userList = new QListWidget(this);
     m_userList->setMinimumWidth(220);
+    m_roomList = new QListWidget(this);
+    m_roomList->setMinimumWidth(220);
+    m_roomEdit = new QLineEdit(this);
+    m_roomEdit->setPlaceholderText("Room name");
+    m_roomActionButton = new QPushButton("Create / Join", this);
+    m_leaveRoomButton = new QPushButton("Leave Room", this);
 
     m_messageEdit = new QLineEdit(this);
     m_messageEdit->setPlaceholderText("Connect first to start chatting");
@@ -106,15 +134,21 @@ void ChatWindow::setupUi()
     formLayout->addRow("Port", m_portEdit);
     formLayout->addRow("Nickname", m_nicknameEdit);
     formLayout->addRow("Status", m_statusLabel);
+    formLayout->addRow("Room", m_currentRoomLabel);
 
     auto* topLayout = new QHBoxLayout();
     topLayout->addLayout(formLayout, 1);
     topLayout->addWidget(m_connectButton);
 
     auto* rightPanelLayout = new QVBoxLayout();
+    rightPanelLayout->addWidget(new QLabel("Rooms", this));
+    rightPanelLayout->addWidget(m_roomList, 1);
+    rightPanelLayout->addWidget(m_roomEdit);
+    rightPanelLayout->addWidget(m_roomActionButton);
+    rightPanelLayout->addWidget(m_leaveRoomButton);
     rightPanelLayout->addWidget(new QLabel("Connected Users", this));
     rightPanelLayout->addWidget(m_userList, 1);
-    rightPanelLayout->addWidget(new QLabel("Commands: /help, /list, /name <new>, /w <nick> <msg>", this));
+    rightPanelLayout->addWidget(new QLabel("Commands: /help, /list, /rooms, /create <room>, /join <room>, /leave, /close, /announce <msg>, /kick <nick>, /bot [on|off|status], /name <new>, /w <nick> <msg>", this));
 
     auto* rightPanel = new QWidget(this);
     rightPanel->setLayout(rightPanelLayout);
@@ -145,12 +179,19 @@ void ChatWindow::setConnectedUiState(bool connected)
     m_connectButton->setEnabled(!connected);
     m_messageEdit->setEnabled(connected);
     m_sendButton->setEnabled(connected);
+    m_roomList->setEnabled(connected);
+    m_roomEdit->setEnabled(connected);
+    m_roomActionButton->setEnabled(connected);
+    m_leaveRoomButton->setEnabled(connected);
     m_messageEdit->setPlaceholderText(
         connected ? "Type a message or command (/help, /list, /w <nickname> ...)"
                   : "Connect first to start chatting");
     if (!connected)
     {
         updateStatus("Disconnected");
+        m_currentRoomLabel->setText("Lobby");
+        m_roomList->clear();
+        m_userList->clear();
         m_connectButton->setFocus();
     }
     else
@@ -187,10 +228,11 @@ void ChatWindow::appendError(const QString& text)
 void ChatWindow::updateUserList(const QString& payload)
 {
     QString cleaned = trimTimestampPrefix(payload);
-    const QString prefix = "connected users: ";
-    if (cleaned.startsWith(prefix, Qt::CaseInsensitive))
+    const QString roomPrefix = "room [";
+    const int roomUsersIndex = cleaned.indexOf("] users: ", 0, Qt::CaseInsensitive);
+    if (cleaned.startsWith(roomPrefix, Qt::CaseInsensitive) && roomUsersIndex > 0)
     {
-        cleaned = cleaned.mid(prefix.size());
+        cleaned = cleaned.mid(roomUsersIndex + 9);
     }
 
     m_userList->clear();
@@ -203,6 +245,47 @@ void ChatWindow::updateUserList(const QString& payload)
         }
         m_userList->addItem(user);
     }
+}
+
+void ChatWindow::updateRoomList(const QString& payload)
+{
+    QString cleaned = trimTimestampPrefix(payload);
+    const QString prefix = "rooms: ";
+    if (cleaned.startsWith(prefix, Qt::CaseInsensitive))
+    {
+        cleaned = cleaned.mid(prefix.size());
+    }
+
+    m_roomList->clear();
+    const QStringList rooms = cleaned.split(", ", Qt::SkipEmptyParts);
+    for (const QString& room : rooms)
+    {
+        m_roomList->addItem(room);
+    }
+
+    const QString currentRoomName = extractRoomName(m_currentRoomLabel->text());
+    for (int i = 0; i < m_roomList->count(); ++i)
+    {
+        QListWidgetItem* item = m_roomList->item(i);
+        if (extractRoomName(item->text()) == currentRoomName)
+        {
+            item->setSelected(true);
+            m_roomList->scrollToItem(item);
+            break;
+        }
+    }
+}
+
+void ChatWindow::updateCurrentRoom(const QString& payload)
+{
+    QString cleaned = trimTimestampPrefix(payload);
+    const QString prefix = "current room: ";
+    if (cleaned.startsWith(prefix, Qt::CaseInsensitive))
+    {
+        cleaned = cleaned.mid(prefix.size());
+    }
+
+    m_currentRoomLabel->setText(cleaned);
 }
 
 void ChatWindow::connectToServer()
@@ -242,7 +325,6 @@ void ChatWindow::socketDisconnected()
     setConnectedUiState(false);
     m_handshakeComplete = false;
     updateStatus("Disconnected");
-    m_userList->clear();
     appendLog("[SYSTEM] disconnected", QColor("#4c5b61"));
 }
 
@@ -268,6 +350,51 @@ void ChatWindow::sendMessage()
 
     sendPacket(MessageType::Chat, text);
     m_messageEdit->clear();
+}
+
+void ChatWindow::joinSelectedRoom(QListWidgetItem* item)
+{
+    if (!m_handshakeComplete || item == nullptr)
+    {
+        return;
+    }
+
+    const QString roomName = extractRoomName(item->text());
+
+    if (!roomName.isEmpty())
+    {
+        sendPacket(MessageType::Chat, "/join " + roomName);
+    }
+}
+
+void ChatWindow::createOrJoinRoom()
+{
+    if (!m_handshakeComplete)
+    {
+        appendError("connect and complete handshake first");
+        return;
+    }
+
+    const QString roomName = m_roomEdit->text().trimmed();
+    if (roomName.isEmpty())
+    {
+        appendError("room name is required");
+        return;
+    }
+
+    sendPacket(MessageType::Chat, "/create " + roomName);
+    m_roomEdit->clear();
+}
+
+void ChatWindow::leaveCurrentRoom()
+{
+    if (!m_handshakeComplete)
+    {
+        appendError("connect and complete handshake first");
+        return;
+    }
+
+    sendPacket(MessageType::Chat, "/leave");
 }
 
 void ChatWindow::sendPacket(MessageType type, const QString& payload)
@@ -325,6 +452,7 @@ void ChatWindow::handlePacket(MessageType type, const QString& payload)
         updateStatus("Connected");
         appendLog("[CONNECTED] " + payload, QColor("#256f3a"));
         sendPacket(MessageType::Chat, "/list");
+        sendPacket(MessageType::Chat, "/rooms");
         break;
     case MessageType::NicknameRejected:
         appendError(payload);
@@ -336,11 +464,9 @@ void ChatWindow::handlePacket(MessageType type, const QString& payload)
         break;
     case MessageType::SystemJoin:
         appendLog("[JOIN] " + payload, QColor("#256f3a"));
-        sendPacket(MessageType::Chat, "/list");
         break;
     case MessageType::SystemLeave:
         appendLog("[LEAVE] " + payload, QColor("#8a2d2d"));
-        sendPacket(MessageType::Chat, "/list");
         break;
     case MessageType::SystemError:
         appendError(payload);
@@ -349,9 +475,16 @@ void ChatWindow::handlePacket(MessageType type, const QString& payload)
         appendLog("[USERS] " + payload, QColor("#5e548e"));
         updateUserList(payload);
         break;
+    case MessageType::RoomList:
+        appendLog("[ROOMS] " + payload, QColor("#15616d"));
+        updateRoomList(payload);
+        break;
+    case MessageType::RoomChanged:
+        appendLog("[ROOM] " + payload, QColor("#8f5a1b"));
+        updateCurrentRoom(payload);
+        break;
     case MessageType::NicknameChanged:
         appendLog("[NAME] " + payload, QColor("#8f5a1b"));
-        sendPacket(MessageType::Chat, "/list");
         break;
     case MessageType::Whisper:
         appendLog("[WHISPER] " + payload, QColor("#7b2cbf"));

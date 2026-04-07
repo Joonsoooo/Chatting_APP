@@ -4,6 +4,11 @@
 #include <iomanip>
 #include <sstream>
 
+namespace
+{
+const char* DEFAULT_ROOM = "Lobby";
+}
+
 static string current_timestamp()
 {
     using namespace std::chrono;
@@ -36,6 +41,17 @@ static bool starts_with_command(const string& payload, const string& command)
     return payload.rfind(command, 0) == 0;
 }
 
+static bool parse_single_argument_command(const string& payload, const string& command, string& argument)
+{
+    if (!starts_with_command(payload, command))
+    {
+        return false;
+    }
+
+    argument = payload.substr(command.size());
+    return !argument.empty();
+}
+
 static bool parse_whisper_command(const string& payload, string& target_nickname, string& message)
 {
     size_t command_offset = string::npos;
@@ -61,6 +77,50 @@ static bool parse_whisper_command(const string& payload, string& target_nickname
     target_nickname = payload.substr(command_offset, first_space - command_offset);
     message = payload.substr(first_space + 1);
     return !target_nickname.empty() && !message.empty();
+}
+
+static bool parse_room_announcement_command(const string& payload, string& message)
+{
+    if (!starts_with_command(payload, "/announce "))
+    {
+        return false;
+    }
+
+    message = payload.substr(10);
+    return !message.empty();
+}
+
+static bool parse_kick_command(const string& payload, string& target_nickname)
+{
+    if (!starts_with_command(payload, "/kick "))
+    {
+        return false;
+    }
+
+    target_nickname = payload.substr(6);
+    return !target_nickname.empty();
+}
+
+static bool parse_bot_command(const string& payload, string& option)
+{
+    if (!starts_with_command(payload, "/bot"))
+    {
+        return false;
+    }
+
+    if (payload.size() == 4)
+    {
+        option.clear();
+        return true;
+    }
+
+    if (payload.size() > 5 && payload[4] == ' ')
+    {
+        option = payload.substr(5);
+        return true;
+    }
+
+    return false;
 }
 
 server_session::server_session()
@@ -162,6 +222,7 @@ void server_session::accept_loop()
         USER_INFO user;
         user.sock = clnt_sock;
         user.nickname = "anonymous";
+        user.room = DEFAULT_ROOM;
 
         {
             lock_guard<mutex> lock(m_client_lock);
@@ -191,6 +252,7 @@ void server_session::handle_client(SOCKET sock)
     }
 
     string nickname = payload;
+    string current_room = DEFAULT_ROOM;
 
     if (!is_valid_nickname(nickname))
     {
@@ -224,6 +286,7 @@ void server_session::handle_client(SOCKET sock)
         if (m_client_info.find(sock) != m_client_info.end())
         {
             m_client_info[sock].nickname = nickname;
+            current_room = m_client_info[sock].room;
         }
     }
 
@@ -239,9 +302,15 @@ void server_session::handle_client(SOCKET sock)
     }
 
     {
-        const string enter_msg = timestamp_message(nickname + " joined the chat.");
-        log_server("INFO", nickname + " joined the chat");
-        broadcast_message(MESSAGE_TYPE::SYSTEM_JOIN, enter_msg, INVALID_SOCKET);
+        const string owner_name = get_room_owner(current_room);
+        const string enter_msg = timestamp_message(
+            nickname + " joined room [" + current_room + "]"
+            + (owner_name.empty() ? "." : " (owner: " + owner_name + ")."));
+        log_server("INFO", nickname + " joined room [" + current_room + "]");
+        broadcast_room_message(MESSAGE_TYPE::SYSTEM_JOIN, enter_msg, current_room, INVALID_SOCKET);
+        notify_room_state(current_room);
+        notify_room_users(current_room);
+        notify_room_catalog();
     }
 
     while (m_running)
@@ -264,114 +333,445 @@ void server_session::handle_client(SOCKET sock)
 
             continue;
         }
-
-        if (payload == "/list")
+        if (process_command(sock, payload, nickname, current_room))
         {
-            send_packet(sock, MESSAGE_TYPE::USER_LIST, timestamp_message(build_user_list()));
             continue;
         }
 
-        if (payload == "/help")
+        process_chat_message(sock, payload, nickname, current_room);
+    }
+
+    {
+        const string leave_msg = timestamp_message(nickname + " left room [" + current_room + "].");
+        log_server("INFO", nickname + " left room [" + current_room + "]");
+        broadcast_room_message(MESSAGE_TYPE::SYSTEM_LEAVE, leave_msg, current_room, INVALID_SOCKET);
+    }
+
+    remove_client(sock);
+    notify_room_state(current_room);
+    notify_room_users(current_room);
+    notify_room_catalog();
+
+    closesocket(sock);
+}
+
+bool server_session::process_command(SOCKET sock, const string& payload, string& nickname, string& current_room)
+{
+    if (payload == "/list")
+    {
+        send_packet(sock, MESSAGE_TYPE::USER_LIST, timestamp_message(build_user_list(current_room)));
+        return true;
+    }
+
+    if (payload == "/rooms")
+    {
+        send_packet(sock, MESSAGE_TYPE::ROOM_LIST, timestamp_message(build_room_list()));
+        return true;
+    }
+
+    if (payload == "/help")
+    {
+        send_packet(
+            sock,
+            MESSAGE_TYPE::SYSTEM_INFO,
+            timestamp_message("commands: /help, /list, /rooms, /create <room>, /join <room>, /leave, /close, /announce <message>, /kick <nickname>, /bot [on|off|status], /name <new_nickname>, /whisper <nickname> <message>, /w <nickname> <message>"));
+        return true;
+    }
+
+    string requested_room;
+    if (parse_single_argument_command(payload, "/create ", requested_room)
+        || parse_single_argument_command(payload, "/join ", requested_room))
+    {
+        if (!is_valid_room_name(requested_room))
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("invalid room name"));
+            return true;
+        }
+
+        if (requested_room == current_room)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_INFO, timestamp_message("already in room [" + current_room + "]"));
+            return true;
+        }
+
+        const bool create_request = starts_with_command(payload, "/create ");
+        if (create_request && room_exists(requested_room))
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("room already exists: " + requested_room));
+            return true;
+        }
+
+        if (!create_request && !room_exists(requested_room))
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("room not found: " + requested_room));
+            return true;
+        }
+
+        const string previous_room = current_room;
+        {
+            lock_guard<mutex> lock(m_client_lock);
+            if (m_client_info.find(sock) != m_client_info.end())
+            {
+                if (create_request)
+                {
+                    m_room_owners[requested_room] = nickname;
+                    m_room_bot_enabled[requested_room] = false;
+                }
+                m_client_info[sock].room = requested_room;
+                cleanup_room_state_locked(previous_room);
+            }
+        }
+
+        current_room = requested_room;
+        log_server("INFO", nickname + " moved from [" + previous_room + "] to [" + current_room + "]");
+        broadcast_room_message(
+            MESSAGE_TYPE::SYSTEM_LEAVE,
+            timestamp_message(nickname + " left room [" + previous_room + "]."),
+            previous_room,
+            INVALID_SOCKET);
+        broadcast_room_message(
+            MESSAGE_TYPE::SYSTEM_JOIN,
+            timestamp_message(nickname + " joined room [" + current_room + "]."),
+            current_room,
+            INVALID_SOCKET);
+        notify_room_state(previous_room);
+        notify_room_state(current_room);
+        notify_room_users(previous_room);
+        notify_room_users(current_room);
+        notify_room_catalog();
+        return true;
+    }
+
+    if (payload == "/leave")
+    {
+        if (current_room == DEFAULT_ROOM)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_INFO, timestamp_message("already in room [" + current_room + "]"));
+            return true;
+        }
+
+        const string previous_room = current_room;
+        {
+            lock_guard<mutex> lock(m_client_lock);
+            if (m_client_info.find(sock) != m_client_info.end())
+            {
+                m_client_info[sock].room = DEFAULT_ROOM;
+                cleanup_room_state_locked(previous_room);
+            }
+        }
+
+        current_room = DEFAULT_ROOM;
+        log_server("INFO", nickname + " returned to [" + current_room + "] from [" + previous_room + "]");
+        broadcast_room_message(
+            MESSAGE_TYPE::SYSTEM_LEAVE,
+            timestamp_message(nickname + " left room [" + previous_room + "]."),
+            previous_room,
+            INVALID_SOCKET);
+        broadcast_room_message(
+            MESSAGE_TYPE::SYSTEM_JOIN,
+            timestamp_message(nickname + " joined room [" + current_room + "]."),
+            current_room,
+            INVALID_SOCKET);
+        notify_room_state(previous_room);
+        notify_room_state(current_room);
+        notify_room_users(previous_room);
+        notify_room_users(current_room);
+        notify_room_catalog();
+        return true;
+    }
+
+    if (payload == "/close")
+    {
+        if (current_room == DEFAULT_ROOM)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("Lobby cannot be closed"));
+            return true;
+        }
+
+        const string owner_name = get_room_owner(current_room);
+        if (owner_name != nickname)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("only the room owner can close this room"));
+            return true;
+        }
+
+        vector<SOCKET> moved_users;
+        {
+            lock_guard<mutex> lock(m_client_lock);
+            for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
+            {
+                if (it->second.sock == INVALID_SOCKET || it->second.room != current_room)
+                {
+                    continue;
+                }
+
+                it->second.room = DEFAULT_ROOM;
+                moved_users.push_back(it->second.sock);
+            }
+
+            m_room_owners.erase(current_room);
+            m_room_bot_enabled.erase(current_room);
+            cleanup_room_state_locked(DEFAULT_ROOM);
+        }
+
+        const string closed_room = current_room;
+        current_room = DEFAULT_ROOM;
+        log_server("INFO", nickname + " closed room [" + closed_room + "]");
+
+        for (size_t i = 0; i < moved_users.size(); ++i)
+        {
+            send_packet(
+                moved_users[i],
+                MESSAGE_TYPE::SYSTEM_INFO,
+                timestamp_message("room [" + closed_room + "] was closed by " + nickname + ". moved to [Lobby]."));
+        }
+
+        broadcast_room_message(
+            MESSAGE_TYPE::SYSTEM_JOIN,
+            timestamp_message("users from room [" + closed_room + "] joined room [Lobby]."),
+            DEFAULT_ROOM,
+            INVALID_SOCKET);
+        notify_room_state(DEFAULT_ROOM);
+        notify_room_users(DEFAULT_ROOM);
+        notify_room_catalog();
+        return true;
+    }
+
+    string announcement_message;
+    if (parse_room_announcement_command(payload, announcement_message))
+    {
+        if (current_room == DEFAULT_ROOM)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("announcements are available inside custom rooms"));
+            return true;
+        }
+
+        if (get_room_owner(current_room) != nickname)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("only the room owner can announce in this room"));
+            return true;
+        }
+
+        if (!is_valid_chat_message(announcement_message))
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("invalid announcement"));
+            return true;
+        }
+
+        broadcast_room_message(
+            MESSAGE_TYPE::SYSTEM_INFO,
+            timestamp_message("[room notice] " + announcement_message),
+            current_room,
+            INVALID_SOCKET);
+        log_server("INFO", nickname + " announced in room [" + current_room + "] : " + announcement_message);
+        return true;
+    }
+
+    string kick_target;
+    if (parse_kick_command(payload, kick_target))
+    {
+        if (current_room == DEFAULT_ROOM)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("kick is available inside custom rooms"));
+            return true;
+        }
+
+        if (get_room_owner(current_room) != nickname)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("only the room owner can kick users from this room"));
+            return true;
+        }
+
+        SOCKET target_sock = find_client_by_nickname_in_room(kick_target, current_room, sock);
+        if (target_sock == INVALID_SOCKET)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("user not found in room: " + kick_target));
+            return true;
+        }
+
+        {
+            lock_guard<mutex> lock(m_client_lock);
+            map<SOCKET, USER_INFO>::iterator it = m_client_info.find(target_sock);
+            if (it != m_client_info.end())
+            {
+                it->second.room = DEFAULT_ROOM;
+                cleanup_room_state_locked(current_room);
+            }
+        }
+
+        send_packet(
+            target_sock,
+            MESSAGE_TYPE::SYSTEM_INFO,
+            timestamp_message("you were removed from room [" + current_room + "] by " + nickname + ". moved to [Lobby]."));
+        broadcast_room_message(
+            MESSAGE_TYPE::SYSTEM_LEAVE,
+            timestamp_message(kick_target + " was removed from room [" + current_room + "] by " + nickname + "."),
+            current_room,
+            INVALID_SOCKET);
+        notify_room_state(current_room);
+        notify_room_users(current_room);
+        notify_room_state(DEFAULT_ROOM);
+        notify_room_users(DEFAULT_ROOM);
+        notify_room_catalog();
+        log_server("INFO", nickname + " kicked " + kick_target + " from room [" + current_room + "]");
+        return true;
+    }
+
+    string bot_option;
+    if (parse_bot_command(payload, bot_option))
+    {
+        if (current_room == DEFAULT_ROOM)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("bot control is available inside custom rooms"));
+            return true;
+        }
+
+        if (bot_option.empty() || bot_option == "status")
         {
             send_packet(
                 sock,
                 MESSAGE_TYPE::SYSTEM_INFO,
-                timestamp_message("commands: /help, /list, /name <new_nickname>, /whisper <nickname> <message>, /w <nickname> <message>"));
-            continue;
+                timestamp_message("room bot is " + string(is_room_bot_enabled(current_room) ? "on" : "off") + " in [" + current_room + "]"));
+            return true;
         }
 
-        if (starts_with_command(payload, "/name "))
+        if (get_room_owner(current_room) != nickname)
         {
-            const string new_nickname = payload.substr(6);
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("only the room owner can change bot status"));
+            return true;
+        }
 
-            if (!is_valid_nickname(new_nickname))
-            {
-                send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("invalid nickname"));
-                continue;
-            }
-
-            if (nickname_exists(new_nickname, sock))
-            {
-                send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("nickname already in use"));
-                continue;
-            }
-
-            const string old_nickname = nickname;
+        if (bot_option == "on" || bot_option == "off")
+        {
+            const bool enabled = bot_option == "on";
             {
                 lock_guard<mutex> lock(m_client_lock);
-                if (m_client_info.find(sock) != m_client_info.end())
+                m_room_bot_enabled[current_room] = enabled;
+            }
+
+            broadcast_room_message(
+                MESSAGE_TYPE::SYSTEM_INFO,
+                timestamp_message("RoomBot is now " + string(enabled ? "enabled" : "disabled") + " in room [" + current_room + "]"),
+                current_room,
+                INVALID_SOCKET);
+            log_server("INFO", nickname + " set RoomBot " + string(enabled ? "on" : "off") + " in [" + current_room + "]");
+            return true;
+        }
+
+        send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("usage: /bot [on|off|status]"));
+        return true;
+    }
+
+    if (starts_with_command(payload, "/name "))
+    {
+        const string new_nickname = payload.substr(6);
+
+        if (!is_valid_nickname(new_nickname))
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("invalid nickname"));
+            return true;
+        }
+
+        if (nickname_exists(new_nickname, sock))
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("nickname already in use"));
+            return true;
+        }
+
+        const string old_nickname = nickname;
+        {
+            lock_guard<mutex> lock(m_client_lock);
+            if (m_client_info.find(sock) != m_client_info.end())
+            {
+                m_client_info[sock].nickname = new_nickname;
+            }
+
+            for (map<string, string>::iterator it = m_room_owners.begin(); it != m_room_owners.end(); ++it)
+            {
+                if (it->second == old_nickname)
                 {
-                    m_client_info[sock].nickname = new_nickname;
+                    it->second = new_nickname;
                 }
             }
-
-            nickname = new_nickname;
-            log_server("INFO", old_nickname + " changed nickname to " + nickname);
-            broadcast_message(
-                MESSAGE_TYPE::NICKNAME_CHANGED,
-                timestamp_message(old_nickname + " is now known as " + nickname),
-                INVALID_SOCKET);
-            continue;
         }
 
-        string target_nickname;
-        string whisper_message;
-        if (parse_whisper_command(payload, target_nickname, whisper_message))
-        {
-            if (!is_valid_chat_message(whisper_message))
-            {
-                send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("invalid whisper message"));
-                continue;
-            }
-
-            SOCKET target_sock = find_client_by_nickname(target_nickname);
-            if (target_sock == INVALID_SOCKET)
-            {
-                send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("user not found: " + target_nickname));
-                continue;
-            }
-
-            if (target_sock == sock)
-            {
-                send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("cannot whisper to yourself"));
-                continue;
-            }
-
-            const string received_whisper = timestamp_message("[from " + nickname + "] " + whisper_message);
-            if (!send_packet(target_sock, MESSAGE_TYPE::WHISPER, received_whisper))
-            {
-                log_server("ERROR", "failed to deliver whisper to " + target_nickname);
-                send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("failed to deliver whisper"));
-                continue;
-            }
-
-            const string sent_whisper = timestamp_message("[to " + target_nickname + "] " + whisper_message);
-            send_packet(sock, MESSAGE_TYPE::WHISPER, sent_whisper);
-            log_server("CHAT", nickname + " whispered to " + target_nickname + " : " + whisper_message);
-            continue;
-        }
-
-        if (starts_with_command(payload, "/whisper") || starts_with_command(payload, "/w"))
-        {
-            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("usage: /whisper <nickname> <message>"));
-            continue;
-        }
-
-        string chat_msg = timestamp_message(nickname + " : " + payload);
-
-        log_server("CHAT", nickname + " : " + payload);
-        broadcast_message(MESSAGE_TYPE::CHAT, chat_msg, sock);
+        nickname = new_nickname;
+        log_server("INFO", old_nickname + " changed nickname to " + nickname);
+        broadcast_room_message(
+            MESSAGE_TYPE::NICKNAME_CHANGED,
+            timestamp_message(
+                old_nickname + " is now known as " + nickname + " in room [" + current_room + "]"
+                + (get_room_owner(current_room).empty() ? "" : " (owner: " + get_room_owner(current_room) + ")")),
+            current_room,
+            INVALID_SOCKET);
+        notify_room_state(current_room);
+        notify_room_users(current_room);
+        notify_room_catalog();
+        return true;
     }
 
+    string target_nickname;
+    string whisper_message;
+    if (parse_whisper_command(payload, target_nickname, whisper_message))
     {
-        const string leave_msg = timestamp_message(nickname + " left the chat.");
-        log_server("INFO", nickname + " left the chat");
-        broadcast_message(MESSAGE_TYPE::SYSTEM_LEAVE, leave_msg, INVALID_SOCKET);
+        if (!is_valid_chat_message(whisper_message))
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("invalid whisper message"));
+            return true;
+        }
+
+        SOCKET target_sock = find_client_by_nickname(target_nickname);
+        if (target_sock == INVALID_SOCKET)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("user not found: " + target_nickname));
+            return true;
+        }
+
+        if (target_sock == sock)
+        {
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("cannot whisper to yourself"));
+            return true;
+        }
+
+        const string received_whisper = timestamp_message("[from " + nickname + "] " + whisper_message);
+        if (!send_packet(target_sock, MESSAGE_TYPE::WHISPER, received_whisper))
+        {
+            log_server("ERROR", "failed to deliver whisper to " + target_nickname);
+            send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("failed to deliver whisper"));
+            return true;
+        }
+
+        const string sent_whisper = timestamp_message("[to " + target_nickname + "] " + whisper_message);
+        send_packet(sock, MESSAGE_TYPE::WHISPER, sent_whisper);
+        log_server("CHAT", nickname + " whispered to " + target_nickname + " : " + whisper_message);
+        return true;
     }
 
-    remove_client(sock);
+    if (starts_with_command(payload, "/whisper") || starts_with_command(payload, "/w"))
+    {
+        send_packet(sock, MESSAGE_TYPE::SYSTEM_ERROR, timestamp_message("usage: /whisper <nickname> <message>"));
+        return true;
+    }
 
-    closesocket(sock);
+    return false;
+}
+
+void server_session::process_chat_message(SOCKET sock, const string& payload, const string& nickname, const string& current_room)
+{
+    const string chat_msg = timestamp_message("[" + current_room + "] " + nickname + " : " + payload);
+
+    log_server("CHAT", "[" + current_room + "] " + nickname + " : " + payload);
+    broadcast_room_message(MESSAGE_TYPE::CHAT, chat_msg, current_room, sock);
+
+    const string bot_reply = build_room_bot_reply(current_room, nickname, payload);
+    if (!bot_reply.empty())
+    {
+        broadcast_room_message(
+            MESSAGE_TYPE::SYSTEM_INFO,
+            timestamp_message("[RoomBot] " + bot_reply),
+            current_room,
+            INVALID_SOCKET);
+    }
 }
 
 void server_session::broadcast_message(MESSAGE_TYPE type, const string& msg, SOCKET sender_sock)
@@ -408,6 +808,42 @@ void server_session::broadcast_message(MESSAGE_TYPE type, const string& msg, SOC
     }
 }
 
+void server_session::broadcast_room_message(MESSAGE_TYPE type, const string& msg, const string& room_name, SOCKET sender_sock)
+{
+    vector<SOCKET> sockets;
+
+    {
+        lock_guard<mutex> lock(m_client_lock);
+        for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
+        {
+            SOCKET target_sock = it->second.sock;
+            if (target_sock == INVALID_SOCKET || it->second.room != room_name)
+            {
+                continue;
+            }
+
+            sockets.push_back(target_sock);
+        }
+    }
+
+    for (size_t i = 0; i < sockets.size(); ++i)
+    {
+        SOCKET target_sock = sockets[i];
+
+        if (!send_packet(target_sock, type, msg))
+        {
+            string log_message = "send() error. sock=" + to_string(static_cast<long long>(target_sock));
+            if (sender_sock != INVALID_SOCKET && target_sock == sender_sock)
+            {
+                log_message += " (sender)";
+            }
+            log_server("ERROR", log_message);
+            remove_client(target_sock);
+            closesocket(target_sock);
+        }
+    }
+}
+
 void server_session::remove_client(SOCKET sock)
 {
     lock_guard<mutex> lock(m_client_lock);
@@ -415,7 +851,9 @@ void server_session::remove_client(SOCKET sock)
     map<SOCKET, USER_INFO>::iterator it = m_client_info.find(sock);
     if (it != m_client_info.end())
     {
+        const string room_name = it->second.room;
         m_client_info.erase(it);
+        cleanup_room_state_locked(room_name);
     }
 }
 
@@ -527,16 +965,38 @@ SOCKET server_session::find_client_by_nickname(const string& nickname)
     return INVALID_SOCKET;
 }
 
-string server_session::build_user_list()
+SOCKET server_session::find_client_by_nickname_in_room(const string& nickname, const string& room_name, SOCKET exclude_sock)
 {
     lock_guard<mutex> lock(m_client_lock);
 
-    string user_list = "connected users: ";
+    for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
+    {
+        if (it->first == exclude_sock)
+        {
+            continue;
+        }
+
+        if (it->second.sock != INVALID_SOCKET
+            && it->second.room == room_name
+            && it->second.nickname == nickname)
+        {
+            return it->second.sock;
+        }
+    }
+
+    return INVALID_SOCKET;
+}
+
+string server_session::build_user_list(const string& room_name)
+{
+    lock_guard<mutex> lock(m_client_lock);
+
+    string user_list = "room [" + room_name + "] users: ";
     bool first = true;
 
     for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
     {
-        if (it->second.sock == INVALID_SOCKET)
+        if (it->second.sock == INVALID_SOCKET || it->second.room != room_name)
         {
             continue;
         }
@@ -556,4 +1016,227 @@ string server_session::build_user_list()
     }
 
     return user_list;
+}
+
+string server_session::build_room_list()
+{
+    lock_guard<mutex> lock(m_client_lock);
+
+    map<string, size_t> room_counts;
+    room_counts[DEFAULT_ROOM] = 0;
+
+    for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
+    {
+        if (it->second.sock == INVALID_SOCKET)
+        {
+            continue;
+        }
+
+        room_counts[it->second.room] += 1;
+    }
+
+    string room_list = "rooms: ";
+    bool first = true;
+    for (map<string, size_t>::iterator it = room_counts.begin(); it != room_counts.end(); ++it)
+    {
+        if (!first)
+        {
+            room_list += ", ";
+        }
+
+        string room_status = it->first + " (" + to_string(it->second) + ")";
+        map<string, string>::iterator owner_it = m_room_owners.find(it->first);
+        if (owner_it != m_room_owners.end() && !owner_it->second.empty())
+        {
+            room_status += " (owner: " + owner_it->second + ")";
+        }
+
+        room_list += room_status;
+        first = false;
+    }
+
+    return room_list;
+}
+
+string server_session::get_client_room(SOCKET sock)
+{
+    lock_guard<mutex> lock(m_client_lock);
+
+    map<SOCKET, USER_INFO>::iterator it = m_client_info.find(sock);
+    if (it != m_client_info.end())
+    {
+        return it->second.room;
+    }
+
+    return DEFAULT_ROOM;
+}
+
+string server_session::get_room_owner(const string& room_name)
+{
+    lock_guard<mutex> lock(m_client_lock);
+
+    map<string, string>::iterator it = m_room_owners.find(room_name);
+    if (it != m_room_owners.end())
+    {
+        return it->second;
+    }
+
+    return "";
+}
+
+bool server_session::room_exists(const string& room_name)
+{
+    lock_guard<mutex> lock(m_client_lock);
+
+    if (room_name == DEFAULT_ROOM)
+    {
+        return true;
+    }
+
+    if (m_room_owners.find(room_name) != m_room_owners.end())
+    {
+        return true;
+    }
+
+    for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
+    {
+        if (it->second.sock != INVALID_SOCKET && it->second.room == room_name)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void server_session::notify_room_catalog()
+{
+    broadcast_message(MESSAGE_TYPE::ROOM_LIST, timestamp_message(build_room_list()), INVALID_SOCKET);
+}
+
+void server_session::notify_room_state(const string& room_name)
+{
+    if (room_name.empty())
+    {
+        return;
+    }
+
+    const string owner_name = get_room_owner(room_name);
+    broadcast_room_message(
+        MESSAGE_TYPE::ROOM_CHANGED,
+        timestamp_message("current room: " + room_name + (owner_name.empty() ? "" : " (owner: " + owner_name + ")")),
+        room_name,
+        INVALID_SOCKET);
+}
+
+void server_session::notify_room_users(const string& room_name)
+{
+    if (room_name.empty())
+    {
+        return;
+    }
+
+    broadcast_room_message(
+        MESSAGE_TYPE::USER_LIST,
+        timestamp_message(build_user_list(room_name)),
+        room_name,
+        INVALID_SOCKET);
+}
+
+void server_session::cleanup_room_state_locked(const string& room_name)
+{
+    if (room_name == DEFAULT_ROOM)
+    {
+        return;
+    }
+
+    size_t room_user_count = 0;
+    string next_owner;
+    for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
+    {
+        if (it->second.sock == INVALID_SOCKET || it->second.room != room_name)
+        {
+            continue;
+        }
+
+        room_user_count += 1;
+        if (next_owner.empty())
+        {
+            next_owner = it->second.nickname;
+        }
+    }
+
+    if (room_user_count == 0)
+    {
+        m_room_owners.erase(room_name);
+        m_room_bot_enabled.erase(room_name);
+        return;
+    }
+
+    map<string, string>::iterator owner_it = m_room_owners.find(room_name);
+    if (owner_it == m_room_owners.end() || owner_it->second.empty())
+    {
+        m_room_owners[room_name] = next_owner;
+        return;
+    }
+
+    bool owner_still_present = false;
+    for (map<SOCKET, USER_INFO>::iterator it = m_client_info.begin(); it != m_client_info.end(); ++it)
+    {
+        if (it->second.sock != INVALID_SOCKET
+            && it->second.room == room_name
+            && it->second.nickname == owner_it->second)
+        {
+            owner_still_present = true;
+            break;
+        }
+    }
+
+    if (!owner_still_present)
+    {
+        owner_it->second = next_owner;
+    }
+}
+
+string server_session::build_room_bot_reply(const string& room_name, const string& nickname, const string& message)
+{
+    if (room_name == DEFAULT_ROOM || !is_room_bot_enabled(room_name))
+    {
+        return "";
+    }
+
+    if (starts_with_command(message, "/"))
+    {
+        return "";
+    }
+
+    if (message.find("hello") != string::npos)
+    {
+        return "hello, " + nickname + ". I am watching room [" + room_name + "].";
+    }
+
+    if (message.find("help") != string::npos)
+    {
+        return "room owner commands: /announce, /kick, /close, /bot on, /bot off.";
+    }
+
+    if (message.find("?") != string::npos)
+    {
+        return "I am a placeholder bot hook. Next step can route this room message to a Python AI service.";
+    }
+
+    return "";
+}
+
+bool server_session::is_room_bot_enabled(const string& room_name)
+{
+    lock_guard<mutex> lock(m_client_lock);
+
+    map<string, bool>::iterator it = m_room_bot_enabled.find(room_name);
+    if (it != m_room_bot_enabled.end())
+    {
+        return it->second;
+    }
+
+    return false;
 }

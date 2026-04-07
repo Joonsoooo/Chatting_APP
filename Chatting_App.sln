@@ -3,20 +3,20 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.14.36705.20
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Client", "Client\Client.vcxproj", "{389ECD12-2506-4828-B63F-3DDF06F9A027}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Client", "project\Client\Client.vcxproj", "{389ECD12-2506-4828-B63F-3DDF06F9A027}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Server", "Server\Server.vcxproj", "{491E8F58-51DE-4C6E-90D1-F1D6FE0FEE0E}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Server", "project\Server\Server.vcxproj", "{491E8F58-51DE-4C6E-90D1-F1D6FE0FEE0E}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Comm_lib", "Comm_lib\Comm_lib.vcxproj", "{DE459EB4-A7FE-4C3D-8C94-F907FEE9A20F}"
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Comm_lib", "project\Comm_lib\Comm_lib.vcxproj", "{DE459EB4-A7FE-4C3D-8C94-F907FEE9A20F}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "QtClient", "QtClient", "{8D33EB92-0575-44B4-A0D8-832055C77BA4}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "QtClient", "project\QtClient", "{8D33EB92-0575-44B4-A0D8-832055C77BA4}"
 	ProjectSection(SolutionItems) = preProject
-		QtClient\CMakeLists.txt = QtClient\CMakeLists.txt
-		QtClient\chatwindow.cpp = QtClient\chatwindow.cpp
-		QtClient\chatwindow.h = QtClient\chatwindow.h
-		QtClient\main.cpp = QtClient\main.cpp
-		QtClient\protocol.h = QtClient\protocol.h
-		QtClient\QtClient.pro = QtClient\QtClient.pro
+		project\QtClient\CMakeLists.txt = project\QtClient\CMakeLists.txt
+		project\QtClient\chatwindow.cpp = project\QtClient\chatwindow.cpp
+		project\QtClient\chatwindow.h = project\QtClient\chatwindow.h
+		project\QtClient\main.cpp = project\QtClient\main.cpp
+		project\QtClient\protocol.h = project\QtClient\protocol.h
+		project\QtClient\QtClient.pro = project\QtClient\QtClient.pro
 	EndProjectSection
 EndProject
 Global

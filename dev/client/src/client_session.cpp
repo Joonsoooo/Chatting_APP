@@ -77,6 +77,12 @@ static void print_client_message(MESSAGE_TYPE type, const string& payload)
 	case MESSAGE_TYPE::WHISPER:
 		cout << "[WHISPER] " << payload << endl;
 		break;
+	case MESSAGE_TYPE::ROOM_LIST:
+		cout << "[ROOMS] " << payload << endl;
+		break;
+	case MESSAGE_TYPE::ROOM_CHANGED:
+		cout << "[ROOM] " << payload << endl;
+		break;
 	case MESSAGE_TYPE::CHAT:
 		cout << payload << endl;
 		break;
@@ -230,7 +236,9 @@ void client_session::recv_loop()
 			|| type == MESSAGE_TYPE::SYSTEM_ERROR
 			|| type == MESSAGE_TYPE::USER_LIST
 			|| type == MESSAGE_TYPE::NICKNAME_CHANGED
-			|| type == MESSAGE_TYPE::WHISPER)
+			|| type == MESSAGE_TYPE::WHISPER
+			|| type == MESSAGE_TYPE::ROOM_LIST
+			|| type == MESSAGE_TYPE::ROOM_CHANGED)
 		{
 			print_client_message(type, payload);
 		}

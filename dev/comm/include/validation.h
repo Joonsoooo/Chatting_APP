@@ -17,7 +17,9 @@ static bool is_valid_message_type(uint32_t type_value)
 		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::SYSTEM_ERROR)
 		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::USER_LIST)
 		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::NICKNAME_CHANGED)
-		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::WHISPER);
+		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::WHISPER)
+		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::ROOM_LIST)
+		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::ROOM_CHANGED);
 }
 
 static bool contains_control_characters(const std::string& text)
@@ -46,4 +48,12 @@ static bool is_valid_chat_message(const std::string& message)
 	return !message.empty()
 		&& message.size() <= MAX_CHAT_LENGTH
 		&& !contains_control_characters(message);
+}
+
+static bool is_valid_room_name(const std::string& room_name)
+{
+	return !room_name.empty()
+		&& room_name.size() <= MAX_ROOM_NAME_LENGTH
+		&& !contains_control_characters(room_name)
+		&& room_name.find(' ') == std::string::npos;
 }

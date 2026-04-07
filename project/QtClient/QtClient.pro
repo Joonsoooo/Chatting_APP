@@ -1,6 +1,7 @@
 QT += core gui network widgets
 
 CONFIG += c++17
+DESTDIR = ../../binary
 
 SOURCES += \
     chatwindow.cpp \

@@ -10,8 +10,8 @@ Release/
 x64/
 x86/
 binary/
-QtClient/build-*/
-QtClient/CMakeFiles/
+project/QtClient/build-*/
+project/QtClient/CMakeFiles/
 
 # User-specific
 *.user
