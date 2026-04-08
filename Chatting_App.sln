@@ -9,15 +9,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Server", "project\Server\Se
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Comm_lib", "project\Comm_lib\Comm_lib.vcxproj", "{DE459EB4-A7FE-4C3D-8C94-F907FEE9A20F}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "QtClient", "project\QtClient", "{8D33EB92-0575-44B4-A0D8-832055C77BA4}"
-	ProjectSection(SolutionItems) = preProject
-		project\QtClient\CMakeLists.txt = project\QtClient\CMakeLists.txt
-		project\QtClient\chatwindow.cpp = project\QtClient\chatwindow.cpp
-		project\QtClient\chatwindow.h = project\QtClient\chatwindow.h
-		project\QtClient\main.cpp = project\QtClient\main.cpp
-		project\QtClient\protocol.h = project\QtClient\protocol.h
-		project\QtClient\QtClient.pro = project\QtClient\QtClient.pro
-	EndProjectSection
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "QtClient", "project\QtClient\QtClient.vcxproj", "{8D33EB92-0575-44B4-A0D8-832055C77BA4}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -51,6 +43,12 @@ Global
 		{DE459EB4-A7FE-4C3D-8C94-F907FEE9A20F}.Release|x64.Build.0 = Release|x64
 		{DE459EB4-A7FE-4C3D-8C94-F907FEE9A20F}.Release|x86.ActiveCfg = Release|Win32
 		{DE459EB4-A7FE-4C3D-8C94-F907FEE9A20F}.Release|x86.Build.0 = Release|Win32
+		{8D33EB92-0575-44B4-A0D8-832055C77BA4}.Debug|x64.ActiveCfg = Debug|x64
+		{8D33EB92-0575-44B4-A0D8-832055C77BA4}.Debug|x64.Build.0 = Debug|x64
+		{8D33EB92-0575-44B4-A0D8-832055C77BA4}.Debug|x86.ActiveCfg = Debug|x64
+		{8D33EB92-0575-44B4-A0D8-832055C77BA4}.Release|x64.ActiveCfg = Release|x64
+		{8D33EB92-0575-44B4-A0D8-832055C77BA4}.Release|x64.Build.0 = Release|x64
+		{8D33EB92-0575-44B4-A0D8-832055C77BA4}.Release|x86.ActiveCfg = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

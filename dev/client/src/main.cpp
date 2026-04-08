@@ -24,13 +24,40 @@ int main()
         return 1;
     }
 
-    string nickname;
-    
-    cout << "nickname: ";
+    string auth_mode;
+    cout << "auth mode (guest/login/register, default guest): ";
+    getline(cin, auth_mode);
 
-    getline(cin, nickname);
+    if (auth_mode.empty())
+    {
+        auth_mode = "guest";
+    }
 
-    if (false == client.send_nickname(nickname))
+    bool handshake_sent = false;
+    if (auth_mode == "login" || auth_mode == "register")
+    {
+        string username;
+        string password;
+        string display_name;
+
+        cout << "account: ";
+        getline(cin, username);
+        cout << "password: ";
+        getline(cin, password);
+        cout << "display name: ";
+        getline(cin, display_name);
+
+        handshake_sent = client.send_auth_request(auth_mode, username, password, display_name);
+    }
+    else
+    {
+        string nickname;
+        cout << "nickname: ";
+        getline(cin, nickname);
+        handshake_sent = client.send_nickname(nickname);
+    }
+
+    if (false == handshake_sent)
     {
         client.close();
 

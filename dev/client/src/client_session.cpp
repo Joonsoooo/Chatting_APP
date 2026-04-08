@@ -83,14 +83,23 @@ static void print_client_message(MESSAGE_TYPE type, const string& payload)
 	case MESSAGE_TYPE::ROOM_CHANGED:
 		cout << "[ROOM] " << payload << endl;
 		break;
+	case MESSAGE_TYPE::ROOM_HISTORY:
+		cout << "[HISTORY] " << payload << endl;
+		break;
 	case MESSAGE_TYPE::CHAT:
 		cout << payload << endl;
 		break;
 	case MESSAGE_TYPE::NICKNAME_ACCEPTED:
 		cout << "[CONNECTED] " << payload << endl;
 		break;
+	case MESSAGE_TYPE::AUTH_SUCCESS:
+		cout << "[AUTH] " << payload << endl;
+		break;
 	case MESSAGE_TYPE::NICKNAME_REJECTED:
 		cerr << "[REJECTED] " << payload << endl;
+		break;
+	case MESSAGE_TYPE::AUTH_FAILURE:
+		cerr << "[AUTH-FAIL] " << payload << endl;
 		break;
 	default:
 		cerr << "[UNKNOWN] " << payload << endl;
@@ -99,7 +108,7 @@ static void print_client_message(MESSAGE_TYPE type, const string& payload)
 }
 
 client_session::client_session()
-	: m_host(DEFAULT_IP), m_port(DEFAULT_PORT), m_running(false), m_wsa_ready(false)
+	: m_host(DEFAULT_IP), m_port(DEFAULT_PORT), m_auth_mode("guest"), m_running(false), m_wsa_ready(false)
 {
 }
 
@@ -238,7 +247,8 @@ void client_session::recv_loop()
 			|| type == MESSAGE_TYPE::NICKNAME_CHANGED
 			|| type == MESSAGE_TYPE::WHISPER
 			|| type == MESSAGE_TYPE::ROOM_LIST
-			|| type == MESSAGE_TYPE::ROOM_CHANGED)
+			|| type == MESSAGE_TYPE::ROOM_CHANGED
+			|| type == MESSAGE_TYPE::ROOM_HISTORY)
 		{
 			print_client_message(type, payload);
 		}
@@ -261,6 +271,29 @@ bool client_session::send_nickname(const string& nickname)
 
 		m_running = false;
 
+		return false;
+	}
+
+	return true;
+}
+
+bool client_session::send_auth_request(const string& mode, const string& username, const string& password, const string& display_name)
+{
+	if ((mode != "login" && mode != "register")
+		|| !is_valid_username(username)
+		|| !is_valid_password(password)
+		|| !is_valid_nickname(display_name))
+	{
+		cerr << "invalid auth request. use valid account/password/display name\n";
+		return false;
+	}
+
+	m_auth_mode = mode;
+	const string payload = mode + "|" + username + "|" + password + "|" + display_name;
+	if (!send_packet(m_user_info.sock, MESSAGE_TYPE::AUTH_REQUEST, payload))
+	{
+		print_wsa_error("send auth error");
+		m_running = false;
 		return false;
 	}
 
@@ -310,7 +343,20 @@ bool client_session::wait_for_nickname_response()
 		return true;
 	}
 
+	if (type == MESSAGE_TYPE::AUTH_SUCCESS)
+	{
+		print_client_message(type, payload);
+		return true;
+	}
+
 	if (type == MESSAGE_TYPE::NICKNAME_REJECTED)
+	{
+		print_client_message(type, payload);
+		m_running = false;
+		return false;
+	}
+
+	if (type == MESSAGE_TYPE::AUTH_FAILURE)
 	{
 		print_client_message(type, payload);
 		m_running = false;

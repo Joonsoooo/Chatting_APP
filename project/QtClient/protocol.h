@@ -19,6 +19,10 @@ enum class MessageType : uint32_t
     Whisper = 12,
     RoomList = 13,
     RoomChanged = 14,
+    AuthRequest = 15,
+    AuthSuccess = 16,
+    AuthFailure = 17,
+    RoomHistory = 18,
 };
 
 struct PacketHeader

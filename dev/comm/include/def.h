@@ -23,6 +23,7 @@ using namespace std;
 struct USER_INFO
 {
 	string nickname ="";
+	string account_name = "";
 	string room = "Lobby";
 	int id = -1;
 

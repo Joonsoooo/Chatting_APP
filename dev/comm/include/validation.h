@@ -17,9 +17,13 @@ static bool is_valid_message_type(uint32_t type_value)
 		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::SYSTEM_ERROR)
 		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::USER_LIST)
 		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::NICKNAME_CHANGED)
-		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::WHISPER)
-		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::ROOM_LIST)
-		|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::ROOM_CHANGED);
+	|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::WHISPER)
+	|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::ROOM_LIST)
+	|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::ROOM_CHANGED)
+	|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::AUTH_REQUEST)
+	|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::AUTH_SUCCESS)
+	|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::AUTH_FAILURE)
+	|| type_value == static_cast<uint32_t>(MESSAGE_TYPE::ROOM_HISTORY);
 }
 
 static bool contains_control_characters(const std::string& text)
@@ -41,6 +45,36 @@ static bool is_valid_nickname(const std::string& nickname)
 	return !nickname.empty()
 		&& nickname.size() <= MAX_NICKNAME_LENGTH
 		&& !contains_control_characters(nickname);
+}
+
+static bool is_valid_username(const std::string& username)
+{
+	if (username.empty()
+		|| username.size() > MAX_USERNAME_LENGTH
+		|| contains_control_characters(username))
+	{
+		return false;
+	}
+
+	for (size_t i = 0; i < username.size(); ++i)
+	{
+		const unsigned char ch = static_cast<unsigned char>(username[i]);
+		const bool is_alpha = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+		const bool is_digit = ch >= '0' && ch <= '9';
+		if (!is_alpha && !is_digit && ch != '_' && ch != '-')
+		{
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static bool is_valid_password(const std::string& password)
+{
+	return !password.empty()
+		&& password.size() <= MAX_PASSWORD_LENGTH
+		&& !contains_control_characters(password);
 }
 
 static bool is_valid_chat_message(const std::string& message)

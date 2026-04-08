@@ -18,12 +18,18 @@
     <ClInclude Include="..\..\dev\server\include\server_session.h">
       <Filter>include</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\dev\server\include\storage_repository.h">
+      <Filter>include</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\..\dev\server\src\server_session.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="..\..\dev\server\src\main.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dev\server\src\storage_repository.cpp">
       <Filter>src</Filter>
     </ClCompile>
   </ItemGroup>

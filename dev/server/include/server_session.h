@@ -1,5 +1,6 @@
 #pragma once
 #include "def.h"
+#include "storage_repository.h"
 
 class server_session
 {
@@ -26,8 +27,11 @@ public:
     void close();
 
 private:
-    bool process_command(SOCKET sock, const string& payload, string& nickname, string& current_room);
+    bool process_command(SOCKET sock, const string& payload, string& nickname, string& account_name, string& current_room);
     void process_chat_message(SOCKET sock, const string& payload, const string& nickname, const string& current_room);
+    bool authenticate_client(SOCKET sock, MESSAGE_TYPE first_type, const string& payload, string& nickname, string& account_name, string& current_room);
+    void send_room_history(SOCKET sock, const string& room_name);
+    void persist_room_state();
     void cleanup_room_state_locked(const string& room_name);
     string build_room_bot_reply(const string& room_name, const string& nickname, const string& message);
     bool is_room_bot_enabled(const string& room_name);
@@ -44,4 +48,5 @@ private:
     mutex m_thread_lock;
     atomic<bool> m_running;
     atomic<bool> m_wsa_ready;
+    storage_repository m_storage;
 };
